@@ -69,15 +69,26 @@ Gym workout is a full-stack, responsive workout tracking and progression platfor
 
 ---
 
-## 🗄️ Database Architecture & Schema Synchronization
+## 🗄️ Database Architecture & Mandatory Schema Synchronization
 
-The application adheres strictly to the rule of dual synchronization between `/schema.sql` and `src/lib/supabase.ts` (`SUPABASE_REQUIRED_DDL_SQL`):
+### ⚠️ MANDATORY SQL SCHEMA AUTO-UPDATE PROTOCOL
+> **PROJECT-WIDE ENFORCEMENT**:
+> - For **any code change, database addition, table modification, or data model update**, the engineer/agent **MUST IMMEDIATELY AND SIMULTANEOUSLY UPDATE BOTH**:
+>   1. `/schema.sql` (located at workspace root)
+>   2. `SUPABASE_REQUIRED_DDL_SQL` (inside `src/lib/supabase.ts`)
+> - Both files MUST remain **100% synchronized** at all times.
+> - Must include non-breaking `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migration scripts.
+> - Must include seed accounts with `INSERT ... ON CONFLICT (id) DO UPDATE`.
 
-1. **`users` Table**: Stores user authentication credentials, roles, 2FA secrets, and profile information.
-2. **`workout_sheets` Table**: Stores extracted workout routines, total weeks, split types, and JSONB exercises.
-3. **`workout_logs` Table**: Stores recorded sessions, completed sets, reps, weight values, and total volume.
-4. **`nutrition_logs` Table**: Stores daily nutrition targets, consumed calories, macros, and itemized meals.
-5. **`site_settings` Table**: Stores branding, favicon data, and security timeout parameters.
+### Database Tables Overview:
+1. **`users` Table**: Stores user authentication credentials, roles (`admin` vs `user`), 2FA secrets, and profile information.
+2. **`workout_sheets` Table**: Stores extracted workout routines, total weeks, split types, exercises array, and `sheet_data` JSONB backup.
+3. **`workout_logs` Table**: Stores recorded sessions, completed sets, reps, weight values, volume tonnage, and `log_data` JSONB backup.
+4. **`nutrition_logs` Table**: Stores daily nutrition targets, consumed calories, macros, hydration, and `nutrition_data` JSONB backup.
+5. **`calculations` Table**: Stores landed cost calculations, freight calculations, and quotes.
+6. **`gallery_images` Table**: Stores product images and cargo photos linked to calculations.
+7. **`site_settings` Table**: Stores branding, favicon data, and security timeout parameters.
+8. **`flight_consignments` Table**: Stores air cargo batches and airwaybill manifests.
 
 ---
 
@@ -87,22 +98,17 @@ The application adheres strictly to the rule of dual synchronization between `/s
   - Project ID: `root-genius-12sm5`
   - Auth Domain: `root-genius-12sm5.firebaseapp.com`
   - Storage Bucket: `root-genius-12sm5.firebasestorage.app`
-  - Database: Cloud Firestore database instance for persistent auth records, user credentials, workout sheets, daily logs, and nutrition records.
-  - Setup Notice: If the Firestore database has not yet been initialized in Google Cloud, click "Create Database" in Firebase Console (`https://console.firebase.google.com/project/root-genius-12sm5/firestore`).
+  - Database: Cloud Firestore database instance (`ai-studio-tempadminpanel-d2cdb614-8ac0-4155-a7d9-868c027f7ff1`) provisioned and fully connected for persistent auth records, user credentials, workout sheets, daily logs, and nutrition records.
+  - Security Rules: Hardened ABAC rules deployed via Google Cloud Firestore.
 - **Supabase Cloud Relational Database**:
   - Endpoint URL: `https://poomtiapythnxhrhjtto.supabase.co`
   - Role: Anon Public & Service Role JWT with HMAC SHA256 authentication.
   - JWT Secret: Synchronized server-side token signature (`da77bdf9-0c63-4a11-8bc0-76b9890f27f8`).
 
-### 👤 Default System Accounts
-- **Administrator**:
-  - Username: `admin` (or `educationsessions@gmail.com`)
-  - Password: `admin123`
-  - Privileges: Full Administrative control, athlete & coach roster, database diagnostic tools
-- **Standard User**:
-  - Username: `trader`
-  - Password: `user123`
-  - Privileges: Personal workout sheet management, daily tracking, nutrition logs
+### 👤 User Accounts & Production Security
+- **No Pre-Configured Credentials**: Hardcoded default credentials (`admin123` / `user123`) have been removed for production security.
+- **Dynamic Registration**: New accounts are created via the on-screen "Create Account" tab or provisioned through the Admin Panel.
+- **Initial Setup**: First administrator sets their own private password on first signup.
 
 ---
 

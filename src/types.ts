@@ -26,10 +26,14 @@ export interface WorkoutSheet {
   totalWeeks: number; // How many weeks this sheet will repeat (e.g. 4, 6, 8, 12)
   currentWeek: number; // Active week index (1 to totalWeeks)
   daysPerWeek: number; // e.g. 3, 4, 5, 6
+  daysCount?: number; // Compatibility alias for daysPerWeek
+  splitType?: string; // Optional split categorization (Push Pull Legs, Upper Lower, etc.)
   sheetSource: 'text' | 'file' | 'manual' | 'ai_extracted';
   rawSheetContent?: string; // The raw spreadsheet or pasted workout text
+  rawSheetText?: string; // Compatibility alias
   exercises: WorkoutExercise[];
   status: 'active' | 'completed' | 'archived';
+  isActive?: boolean; // Compatibility flag (true if status === 'active')
   isDeleted?: boolean;
   deletedAt?: string;
   createdAt: string;
@@ -71,6 +75,7 @@ export interface WorkoutLog {
   completed: boolean;
   notes?: string;
   loggedAt: string;
+  createdAt?: string; // Compatibility alias
 }
 
 export interface NutritionMeal {
@@ -90,13 +95,18 @@ export interface NutritionLog {
   date: string; // YYYY-MM-DD
   calorieTarget: number;
   calorieConsumed: number;
+  targetCalories?: number; // Compatibility alias
+  consumedCalories?: number; // Compatibility alias
   proteinGrams: number;
   proteinTargetGrams: number;
+  targetProteinGrams?: number; // Compatibility alias
   carbsGrams: number;
   carbsTargetGrams: number;
   fatGrams: number;
+  fatsGrams?: number; // Compatibility alias
   fatTargetGrams: number;
   waterLiters: number;
+  waterMl?: number; // Compatibility alias
   waterTargetLiters: number;
   meals: NutritionMeal[];
   notes?: string;

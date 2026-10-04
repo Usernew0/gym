@@ -13,6 +13,9 @@ import {
   saveSessionTimeoutToFirestore,
   getSessionTimeoutFromFirestore,
   subscribeToSessionTimeout,
+  saveCreateAccountEnabledToFirestore,
+  getCreateAccountEnabledFromFirestore,
+  subscribeToCreateAccountEnabled,
   saveAiKeyToFirestore,
   getAiKeyFromFirestore,
   subscribeToAiKey,
@@ -28,6 +31,8 @@ import {
   getSiteFaviconApi,
   saveSessionTimeoutApi,
   getSessionTimeoutApi,
+  getAuthPolicyApi,
+  saveAuthPolicyApi,
   checkSupabaseHealthApi,
   getAiKeyStatusApi,
   saveAiKeyApi,
@@ -279,6 +284,83 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       );
     } finally {
       setIsSavingTimeout(false);
+    }
+  };
+
+  // Create Account / User Registration Policy Toggle (Firestore site_settings/auth_policy)
+  const [allowCreateAccount, setAllowCreateAccount] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('cargo_allow_create_account');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [isSavingAuthPolicy, setIsSavingAuthPolicy] = useState<boolean>(false);
+
+  // Load allowCreateAccount policy on mount and subscribe to real-time changes
+  useEffect(() => {
+    getCreateAccountEnabledFromFirestore().then((remoteVal) => {
+      setAllowCreateAccount(remoteVal);
+      try {
+        localStorage.setItem('cargo_allow_create_account', String(remoteVal));
+      } catch {}
+    });
+
+    getAuthPolicyApi().then((res) => {
+      if (typeof res?.allowCreateAccount === 'boolean') {
+        setAllowCreateAccount(res.allowCreateAccount);
+      }
+    });
+
+    const unsub = subscribeToCreateAccountEnabled((newVal) => {
+      setAllowCreateAccount(newVal);
+    });
+
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  const handleToggleCreateAccount = async (targetValue?: boolean) => {
+    const newVal = typeof targetValue === 'boolean' ? targetValue : !allowCreateAccount;
+    setAllowCreateAccount(newVal);
+    setIsSavingAuthPolicy(true);
+
+    try {
+      // 1. Dual-write to Firestore site_settings/auth_policy
+      await saveCreateAccountEnabledToFirestore(newVal, currentUser?.username || 'admin');
+
+      // 2. Persist to Backend API
+      await saveAuthPolicyApi(newVal);
+
+      // 3. Local update and dispatch event for immediate reactivity
+      try {
+        localStorage.setItem('cargo_allow_create_account', String(newVal));
+        window.dispatchEvent(
+          new CustomEvent('cargo_allow_create_account_updated', { detail: newVal })
+        );
+      } catch {}
+
+      showNotification(
+        'success',
+        lang === 'ar'
+          ? (newVal
+              ? 'تم تفعيل وإظهار خيار إنشاء حساب جديد في شاشة الدخول بنجاح'
+              : 'تم تعطيل وإخفاء خيار إنشاء حساب جديد من شاشة الدخول بنجاح')
+          : (newVal
+              ? 'Create Account option is now VISIBLE on Login Screen'
+              : 'Create Account option is now HIDDEN from Login Screen')
+      );
+    } catch (err: any) {
+      showNotification(
+        'error',
+        lang === 'ar'
+          ? 'تعذر حفظ إعداد إنشاء الحساب في Firestore'
+          : 'Failed to update Create Account policy setting'
+      );
+    } finally {
+      setIsSavingAuthPolicy(false);
     }
   };
 
@@ -1979,6 +2061,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="flex justify-between items-center">
                   <span className="flex items-center gap-1">
                     <Table className="w-3 h-3 text-slate-500" />
+                    <span>workout_sheets:</span>
+                  </span>
+                  {supabaseHealth?.workoutSheetsTableOk ? (
+                    <span className="text-emerald-400 font-bold">
+                      ✓ OK ({supabaseHealth.workoutSheetsCount} {lang === 'ar' ? 'جدول' : 'sheets'})
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {supabaseHealth?.workoutSheetsError || 'Missing Table'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="flex items-center gap-1">
+                    <Table className="w-3 h-3 text-slate-500" />
+                    <span>workout_logs:</span>
+                  </span>
+                  {supabaseHealth?.workoutLogsTableOk ? (
+                    <span className="text-emerald-400 font-bold">
+                      ✓ OK ({supabaseHealth.workoutLogsCount} {lang === 'ar' ? 'تمرين' : 'logs'})
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {supabaseHealth?.workoutLogsError || 'Missing Table'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="flex items-center gap-1">
+                    <Table className="w-3 h-3 text-slate-500" />
+                    <span>nutrition_logs:</span>
+                  </span>
+                  {supabaseHealth?.nutritionLogsTableOk ? (
+                    <span className="text-emerald-400 font-bold">
+                      ✓ OK ({supabaseHealth.nutritionLogsCount} {lang === 'ar' ? 'سجل' : 'logs'})
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {supabaseHealth?.nutritionLogsError || 'Missing Table'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="flex items-center gap-1">
+                    <Table className="w-3 h-3 text-slate-500" />
                     <span>calculations table:</span>
                   </span>
                   {supabaseHealth?.calculationsTableOk ? (
@@ -2055,6 +2188,137 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </a>
             </div>
           )}
+        </div>
+
+        {/* Create Account / User Registration Policy Card (Firestore site_settings/auth_policy) */}
+        <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-700/80">
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl border ${
+                allowCreateAccount
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              }`}>
+                {allowCreateAccount ? <UserPlus className="w-5 h-5" /> : <UserX className="w-5 h-5" />}
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                  <span>
+                    {lang === 'ar'
+                      ? 'إظهار / إخفاء إنشاء الحساب في شاشة تسجيل الدخول'
+                      : 'Show or Hide Create Account on Login Screen'}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold border ${
+                    allowCreateAccount
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                  }`}>
+                    {allowCreateAccount
+                      ? (lang === 'ar' ? 'مفعل ومتاح للزوار' : 'VISIBLE & ACTIVE')
+                      : (lang === 'ar' ? 'مخفي ومعطل' : 'HIDDEN & DISABLED')}
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {lang === 'ar'
+                    ? 'التحكم الفوري في إتاحة تبويب إنشاء حساب جديد للزوار في واجهة الدخول أو إخفائه لمنع التسجيل العام'
+                    : 'Controls whether the "Create Account" tab is visible to public visitors on the Login screen'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <button
+                type="button"
+                onClick={() => handleToggleCreateAccount()}
+                disabled={isSavingAuthPolicy}
+                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-md cursor-pointer disabled:opacity-50 active:scale-95 min-h-[44px] ${
+                  allowCreateAccount
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-950/40'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40'
+                }`}
+              >
+                {isSavingAuthPolicy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : allowCreateAccount ? (
+                  <UserX className="w-4 h-4" />
+                ) : (
+                  <UserPlus className="w-4 h-4" />
+                )}
+                <span>
+                  {isSavingAuthPolicy
+                    ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...')
+                    : allowCreateAccount
+                    ? (lang === 'ar' ? 'إخفاء وتعطيل إنشاء الحساب' : 'Hide Create Account Tab')
+                    : (lang === 'ar' ? 'إظهار وتفعيل إنشاء الحساب' : 'Show Create Account Tab')}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Detailed Status & Interactive Switch Banner */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-900/70 p-4 rounded-xl border border-slate-700/60">
+            <div className="md:col-span-8 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  allowCreateAccount ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+                }`} />
+                <span className="text-xs font-bold text-slate-200">
+                  {lang === 'ar' ? 'الحالة الحالية في واجهة الدخول:' : 'Current State on Login Screen:'}{' '}
+                  <strong className={allowCreateAccount ? 'text-emerald-400' : 'text-rose-400'}>
+                    {allowCreateAccount
+                      ? (lang === 'ar' ? 'تبويب إنشاء حساب ظاهر للجميع' : 'Create Account Tab is Visible to All Visitors')
+                      : (lang === 'ar' ? 'تبويب إنشاء حساب مخفي ومغلق تماماً' : 'Create Account Tab is Completely Hidden')}
+                  </strong>
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                {allowCreateAccount
+                  ? (lang === 'ar'
+                      ? 'يمكن للزوار والرياضيين النقر على تبويب "إنشاء حساب جديد" وتسجيل حساباتهم بأنفسهم.'
+                      : 'Visitors can toggle to "Create Account" and self-register their workout profiles.')
+                  : (lang === 'ar'
+                      ? 'شاشة تسجيل الدخول تعرض نموذج تسجيل الدخول فقط. لا يستطيع الزوار إنشاء حسابات إلا عبر دعوة المدير من لوحة التحكم.'
+                      : 'Login screen displays only the Sign In form. Self-service registration is locked to prevent unauthorized sign-ups.')}
+              </p>
+            </div>
+
+            {/* Mobile Touch-Friendly Switch */}
+            <div className="md:col-span-4 flex items-center justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-slate-800">
+              <span className="text-xs font-semibold text-slate-300 select-none">
+                {allowCreateAccount
+                  ? (lang === 'ar' ? 'ظاهر (مفعل)' : 'Visible (Enabled)')
+                  : (lang === 'ar' ? 'مخفي (معطل)' : 'Hidden (Disabled)')}
+              </span>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={allowCreateAccount}
+                onClick={() => handleToggleCreateAccount()}
+                disabled={isSavingAuthPolicy}
+                className={`relative inline-flex h-8 w-16 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-50 min-h-[44px] min-w-[64px] items-center p-0.5 ${
+                  allowCreateAccount ? 'bg-emerald-500' : 'bg-slate-700'
+                }`}
+                title={allowCreateAccount ? 'Click to hide create account' : 'Click to show create account'}
+              >
+                <span className="sr-only">Toggle create account visibility</span>
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                    allowCreateAccount
+                      ? (lang === 'ar' ? '-translate-x-8' : 'translate-x-8')
+                      : 'translate-x-0'
+                  }`}
+                >
+                  {allowCreateAccount ? (
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : (
+                    <UserX className="w-3.5 h-3.5 text-slate-500" />
+                  )}
+                </span>
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Session Inactivity & Security Policy Settings Card (Firestore site_settings) */}

@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS public.workout_sheets (
   days_count INTEGER DEFAULT 3,
   raw_sheet_text TEXT,
   exercises JSONB, -- Stores WorkoutExercise[] array
+  sheet_data JSONB, -- Complete WorkoutSheet object backup
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -230,6 +231,7 @@ CREATE TABLE IF NOT EXISTS public.workout_logs (
   max_weight_kg NUMERIC DEFAULT 0,
   notes TEXT,
   exercises JSONB, -- Stores LoggedExercise[] with sets, reps, weight_kg, completed
+  log_data JSONB, -- Complete WorkoutLog object backup
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -246,6 +248,7 @@ CREATE TABLE IF NOT EXISTS public.nutrition_logs (
   fats_grams NUMERIC DEFAULT 0,
   water_ml INTEGER DEFAULT 0,
   meals JSONB, -- Stores NutritionMeal[] array
+  nutrition_data JSONB, -- Complete NutritionLog object backup
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -291,49 +294,10 @@ CREATE POLICY "Allow anon read write flight_consignments" ON public.flight_consi
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_backup_codes JSONB;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_confirmed_at TIMESTAMPTZ;
+ALTER TABLE public.workout_sheets ADD COLUMN IF NOT EXISTS sheet_data JSONB;
+ALTER TABLE public.workout_logs ADD COLUMN IF NOT EXISTS log_data JSONB;
+ALTER TABLE public.nutrition_logs ADD COLUMN IF NOT EXISTS nutrition_data JSONB;
 
--- 10. Seed Default Admin Accounts
-INSERT INTO public.users (
-  id,
-  user_id,
-  username,
-  full_name,
-  email,
-  phone,
-  company_name,
-  role,
-  status,
-  password,
-  created_at
-) VALUES 
-  (
-    'admin',
-    'USR-ADMIN-001',
-    'admin',
-    'System Administrator',
-    'admin@globaltrade.com',
-    '+201001234567',
-    'Gym Workout Operations',
-    'admin',
-    'active',
-    'admin123',
-    NOW()
-  ),
-  (
-    'educationsessions@gmail.com',
-    'USR-ADMIN-002',
-    'educationsessions@gmail.com',
-    'Education Admin',
-    'educationsessions@gmail.com',
-    '+201001234567',
-    'Gym Workout Operations',
-    'admin',
-    'active',
-    'admin123',
-    NOW()
-  )
-ON CONFLICT (id) DO UPDATE SET
-  role = 'admin',
-  status = 'active',
-  password = EXCLUDED.password;
+-- 10. Default Pre-Configured Credentials removed for production security.
+-- User accounts are created dynamically via User Registration or the Admin Panel.
 

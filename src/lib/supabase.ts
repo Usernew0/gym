@@ -781,10 +781,11 @@ export async function saveWorkoutSheetToSupabase(sheet: WorkoutSheet): Promise<v
       total_weeks: sheet.totalWeeks || 8,
       current_week: sheet.currentWeek || 1,
       split_type: sheet.splitType || 'Push Pull Legs',
-      days_count: sheet.daysCount || 3,
-      raw_sheet_text: sheet.rawSheetText || '',
+      days_count: sheet.daysCount || sheet.daysPerWeek || 3,
+      raw_sheet_text: sheet.rawSheetText || sheet.rawSheetContent || '',
       exercises: sheet.exercises || [],
-      is_active: sheet.isActive !== false,
+      is_active: sheet.isActive !== false && sheet.status !== 'archived',
+      sheet_data: sheet,
       updated_at: new Date().toISOString(),
     };
     const { error } = await supabase
@@ -807,21 +808,31 @@ export async function getWorkoutSheetsFromSupabase(userId?: string): Promise<Wor
       handleSupabaseError('getWorkoutSheetsFromSupabase', error);
       return [];
     }
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      userId: row.user_id,
-      name: row.name,
-      description: row.description,
-      totalWeeks: row.total_weeks,
-      currentWeek: row.current_week,
-      splitType: row.split_type,
-      daysCount: row.days_count,
-      rawSheetText: row.raw_sheet_text,
-      exercises: Array.isArray(row.exercises) ? row.exercises : [],
-      isActive: row.is_active,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return (data || []).map((row: any) => {
+      const fallback = row.sheet_data || {};
+      const status: 'active' | 'completed' | 'archived' =
+        fallback.status || (row.is_active === false ? 'archived' : 'active');
+      return {
+        id: row.id,
+        userId: row.user_id || fallback.userId || 'user',
+        userName: row.user_name || fallback.userName,
+        name: row.name || fallback.name || 'Workout Sheet',
+        description: row.description ?? fallback.description,
+        totalWeeks: row.total_weeks ?? fallback.totalWeeks ?? 8,
+        currentWeek: row.current_week ?? fallback.currentWeek ?? 1,
+        daysPerWeek: row.days_count ?? row.days_per_week ?? fallback.daysPerWeek ?? fallback.daysCount ?? 3,
+        daysCount: row.days_count ?? fallback.daysCount ?? 3,
+        splitType: row.split_type ?? fallback.splitType ?? 'Push Pull Legs',
+        sheetSource: fallback.sheetSource || 'manual',
+        rawSheetContent: row.raw_sheet_text ?? fallback.rawSheetContent ?? '',
+        rawSheetText: row.raw_sheet_text ?? fallback.rawSheetText ?? '',
+        exercises: Array.isArray(row.exercises) && row.exercises.length > 0 ? row.exercises : (fallback.exercises || []),
+        status,
+        isActive: status === 'active',
+        createdAt: row.created_at || fallback.createdAt || new Date().toISOString(),
+        updatedAt: row.updated_at || fallback.updatedAt,
+      };
+    });
   } catch (err) {
     handleSupabaseError('getWorkoutSheetsFromSupabase catch', err);
     return [];
@@ -851,7 +862,8 @@ export async function saveWorkoutLogToSupabase(log: WorkoutLog): Promise<void> {
       max_weight_kg: log.maxWeightKg || 0,
       notes: log.notes || '',
       exercises: log.exercises || [],
-      created_at: log.createdAt || new Date().toISOString(),
+      log_data: log,
+      created_at: log.loggedAt || log.createdAt || new Date().toISOString(),
     };
     const { error } = await supabase
       .from(WORKOUT_LOGS_TABLE)
@@ -873,20 +885,27 @@ export async function getWorkoutLogsFromSupabase(userId?: string): Promise<Worko
       handleSupabaseError('getWorkoutLogsFromSupabase', error);
       return [];
     }
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      sheetId: row.sheet_id,
-      sheetName: row.sheet_name,
-      userId: row.user_id,
-      dayName: row.day_name,
-      weekNumber: row.week_number,
-      date: row.date,
-      totalVolumeKg: Number(row.total_volume_kg) || 0,
-      maxWeightKg: Number(row.max_weight_kg) || 0,
-      notes: row.notes,
-      exercises: Array.isArray(row.exercises) ? row.exercises : [],
-      createdAt: row.created_at,
-    }));
+    return (data || []).map((row: any) => {
+      const fallback = row.log_data || {};
+      const loggedAt = row.created_at || fallback.loggedAt || fallback.createdAt || new Date().toISOString();
+      return {
+        id: row.id,
+        sheetId: row.sheet_id || fallback.sheetId || '',
+        sheetName: row.sheet_name || fallback.sheetName,
+        userId: row.user_id || fallback.userId || '',
+        userName: fallback.userName,
+        dayName: row.day_name || fallback.dayName || 'Day 1',
+        weekNumber: row.week_number ?? fallback.weekNumber ?? 1,
+        date: row.date || fallback.date || new Date().toISOString().split('T')[0],
+        totalVolumeKg: Number(row.total_volume_kg) || Number(fallback.totalVolumeKg) || 0,
+        maxWeightKg: Number(row.max_weight_kg) || Number(fallback.maxWeightKg) || 0,
+        completed: Boolean(fallback.completed ?? true),
+        notes: row.notes ?? fallback.notes ?? '',
+        exercises: Array.isArray(row.exercises) && row.exercises.length > 0 ? row.exercises : (fallback.exercises || []),
+        loggedAt,
+        createdAt: loggedAt,
+      };
+    });
   } catch (err) {
     handleSupabaseError('getWorkoutLogsFromSupabase catch', err);
     return [];
@@ -899,15 +918,16 @@ export async function saveNutritionLogToSupabase(log: NutritionLog): Promise<voi
       id: log.id || log.date,
       user_id: log.userId || null,
       date: log.date,
-      target_calories: log.targetCalories || 2400,
-      consumed_calories: log.consumedCalories || 0,
+      target_calories: log.calorieTarget || log.targetCalories || 2400,
+      consumed_calories: log.calorieConsumed || log.consumedCalories || 0,
       protein_grams: log.proteinGrams || 0,
-      target_protein_grams: log.targetProteinGrams || 160,
+      target_protein_grams: log.proteinTargetGrams || log.targetProteinGrams || 160,
       carbs_grams: log.carbsGrams || 0,
-      fats_grams: log.fatsGrams || 0,
-      water_ml: log.waterMl || 0,
+      fats_grams: log.fatGrams || log.fatsGrams || 0,
+      water_ml: log.waterMl || Math.round((log.waterLiters || 0) * 1000),
       meals: log.meals || [],
       notes: log.notes || '',
+      nutrition_data: log,
       updated_at: new Date().toISOString(),
     };
     const { error } = await supabase
@@ -930,22 +950,44 @@ export async function getNutritionLogsFromSupabase(userId?: string): Promise<Nut
       handleSupabaseError('getNutritionLogsFromSupabase', error);
       return [];
     }
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      userId: row.user_id,
-      date: row.date,
-      targetCalories: Number(row.target_calories) || 2400,
-      consumedCalories: Number(row.consumed_calories) || 0,
-      proteinGrams: Number(row.protein_grams) || 0,
-      targetProteinGrams: Number(row.target_protein_grams) || 160,
-      carbsGrams: Number(row.carbs_grams) || 0,
-      fatsGrams: Number(row.fats_grams) || 0,
-      waterMl: Number(row.water_ml) || 0,
-      meals: Array.isArray(row.meals) ? row.meals : [],
-      notes: row.notes,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return (data || []).map((row: any) => {
+      const fallback = row.nutrition_data || {};
+      const calorieTarget = Number(row.target_calories) || Number(fallback.calorieTarget) || 2400;
+      const calorieConsumed = Number(row.consumed_calories) || Number(fallback.calorieConsumed) || 0;
+      const proteinGrams = Number(row.protein_grams) || Number(fallback.proteinGrams) || 0;
+      const proteinTargetGrams = Number(row.target_protein_grams) || Number(fallback.proteinTargetGrams) || 160;
+      const carbsGrams = Number(row.carbs_grams) || Number(fallback.carbsGrams) || 0;
+      const carbsTargetGrams = Number(fallback.carbsTargetGrams) || 250;
+      const fatGrams = Number(row.fats_grams) || Number(fallback.fatGrams) || 0;
+      const fatTargetGrams = Number(fallback.fatTargetGrams) || 60;
+      const waterLiters = Number(fallback.waterLiters) || (row.water_ml ? row.water_ml / 1000 : 0);
+      const waterTargetLiters = Number(fallback.waterTargetLiters) || 3.0;
+
+      return {
+        id: row.id,
+        userId: row.user_id || fallback.userId || '',
+        date: row.date || fallback.date || new Date().toISOString().split('T')[0],
+        calorieTarget,
+        calorieConsumed,
+        targetCalories: calorieTarget,
+        consumedCalories: calorieConsumed,
+        proteinGrams,
+        proteinTargetGrams,
+        targetProteinGrams: proteinTargetGrams,
+        carbsGrams,
+        carbsTargetGrams,
+        fatGrams,
+        fatsGrams: fatGrams,
+        fatTargetGrams,
+        waterLiters,
+        waterTargetLiters,
+        waterMl: row.water_ml ?? Math.round(waterLiters * 1000),
+        meals: Array.isArray(row.meals) && row.meals.length > 0 ? row.meals : (fallback.meals || []),
+        notes: row.notes ?? fallback.notes ?? '',
+        createdAt: row.created_at || fallback.createdAt || new Date().toISOString(),
+        updatedAt: row.updated_at || fallback.updatedAt,
+      };
+    });
   } catch (err) {
     handleSupabaseError('getNutritionLogsFromSupabase catch', err);
     return [];
@@ -958,14 +1000,23 @@ export interface SupabaseHealthReport {
   calculationsTableOk: boolean;
   galleryTableOk: boolean;
   flightsTableOk?: boolean;
+  workoutSheetsTableOk?: boolean;
+  workoutLogsTableOk?: boolean;
+  nutritionLogsTableOk?: boolean;
   usersCount: number;
   calculationsCount: number;
   galleryImagesCount: number;
   flightsCount?: number;
+  workoutSheetsCount?: number;
+  workoutLogsCount?: number;
+  nutritionLogsCount?: number;
   usersError?: string;
   calculationsError?: string;
   galleryError?: string;
   flightsError?: string;
+  workoutSheetsError?: string;
+  workoutLogsError?: string;
+  nutritionLogsError?: string;
   generalError?: string;
   checkedAt: string;
   recommendedSqlDDL: string;
@@ -1182,6 +1233,7 @@ CREATE TABLE IF NOT EXISTS public.workout_sheets (
   days_count INTEGER DEFAULT 3,
   raw_sheet_text TEXT,
   exercises JSONB, -- Stores WorkoutExercise[] array
+  sheet_data JSONB, -- Complete WorkoutSheet object backup
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -1200,6 +1252,7 @@ CREATE TABLE IF NOT EXISTS public.workout_logs (
   max_weight_kg NUMERIC DEFAULT 0,
   notes TEXT,
   exercises JSONB, -- Stores LoggedExercise[] with sets, reps, weight_kg, completed
+  log_data JSONB, -- Complete WorkoutLog object backup
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -1216,6 +1269,7 @@ CREATE TABLE IF NOT EXISTS public.nutrition_logs (
   fats_grams NUMERIC DEFAULT 0,
   water_ml INTEGER DEFAULT 0,
   meals JSONB, -- Stores NutritionMeal[] array
+  nutrition_data JSONB, -- Complete NutritionLog object backup
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -1261,51 +1315,12 @@ CREATE POLICY "Allow anon read write flight_consignments" ON public.flight_consi
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_backup_codes JSONB;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_confirmed_at TIMESTAMPTZ;
+ALTER TABLE public.workout_sheets ADD COLUMN IF NOT EXISTS sheet_data JSONB;
+ALTER TABLE public.workout_logs ADD COLUMN IF NOT EXISTS log_data JSONB;
+ALTER TABLE public.nutrition_logs ADD COLUMN IF NOT EXISTS nutrition_data JSONB;
 
--- 10. Seed Default Admin Accounts
-INSERT INTO public.users (
-  id,
-  user_id,
-  username,
-  full_name,
-  email,
-  phone,
-  company_name,
-  role,
-  status,
-  password,
-  created_at
-) VALUES 
-  (
-    'admin',
-    'USR-ADMIN-001',
-    'admin',
-    'System Administrator',
-    'admin@globaltrade.com',
-    '+201001234567',
-    'Gym Workout Operations',
-    'admin',
-    'active',
-    'admin123',
-    NOW()
-  ),
-  (
-    'educationsessions@gmail.com',
-    'USR-ADMIN-002',
-    'educationsessions@gmail.com',
-    'Education Admin',
-    'educationsessions@gmail.com',
-    '+201001234567',
-    'Gym Workout Operations',
-    'admin',
-    'active',
-    'admin123',
-    NOW()
-  )
-ON CONFLICT (id) DO UPDATE SET
-  role = 'admin',
-  status = 'active',
-  password = EXCLUDED.password;
+-- 10. Default Pre-Configured Credentials removed for production security.
+-- User accounts are created dynamically via User Registration or the Admin Panel.
 `;
 
 /**
@@ -1318,16 +1333,22 @@ export async function checkSupabaseHealth(): Promise<SupabaseHealthReport> {
     calculationsTableOk: false,
     galleryTableOk: false,
     flightsTableOk: false,
+    workoutSheetsTableOk: false,
+    workoutLogsTableOk: false,
+    nutritionLogsTableOk: false,
     usersCount: 0,
     calculationsCount: 0,
     galleryImagesCount: 0,
     flightsCount: 0,
+    workoutSheetsCount: 0,
+    workoutLogsCount: 0,
+    nutritionLogsCount: 0,
     checkedAt: new Date().toISOString(),
     recommendedSqlDDL: SUPABASE_REQUIRED_DDL_SQL,
   };
 
   try {
-    // Check users table
+    // 1. Check users table
     const { count: usersCount, error: usersErr } = await supabase
       .from(USERS_TABLE)
       .select('id', { count: 'exact', head: true });
@@ -1342,7 +1363,46 @@ export async function checkSupabaseHealth(): Promise<SupabaseHealthReport> {
       report.usersCount = usersCount ?? 0;
     }
 
-    // Check calculations table
+    // 2. Check workout_sheets table
+    const { count: sheetsCount, error: sheetsErr } = await supabase
+      .from(WORKOUT_SHEETS_TABLE)
+      .select('id', { count: 'exact', head: true });
+
+    if (sheetsErr) {
+      report.workoutSheetsError = sheetsErr.message;
+      report.workoutSheetsTableOk = false;
+    } else {
+      report.workoutSheetsTableOk = true;
+      report.workoutSheetsCount = sheetsCount ?? 0;
+    }
+
+    // 3. Check workout_logs table
+    const { count: logsCount, error: logsErr } = await supabase
+      .from(WORKOUT_LOGS_TABLE)
+      .select('id', { count: 'exact', head: true });
+
+    if (logsErr) {
+      report.workoutLogsError = logsErr.message;
+      report.workoutLogsTableOk = false;
+    } else {
+      report.workoutLogsTableOk = true;
+      report.workoutLogsCount = logsCount ?? 0;
+    }
+
+    // 4. Check nutrition_logs table
+    const { count: nutrCount, error: nutrErr } = await supabase
+      .from(NUTRITION_LOGS_TABLE)
+      .select('id', { count: 'exact', head: true });
+
+    if (nutrErr) {
+      report.nutritionLogsError = nutrErr.message;
+      report.nutritionLogsTableOk = false;
+    } else {
+      report.nutritionLogsTableOk = true;
+      report.nutritionLogsCount = nutrCount ?? 0;
+    }
+
+    // 5. Check calculations table
     const { count: calcsCount, error: calcsErr } = await supabase
       .from(CALCULATIONS_TABLE)
       .select('id', { count: 'exact', head: true });
@@ -1357,37 +1417,35 @@ export async function checkSupabaseHealth(): Promise<SupabaseHealthReport> {
       report.calculationsCount = calcsCount ?? 0;
     }
 
-    // Check gallery_images table
+    // 6. Check gallery_images table
     const { count: galleryCount, error: galleryErr } = await supabase
       .from(GALLERY_TABLE)
       .select('id', { count: 'exact', head: true });
 
     if (galleryErr) {
       report.galleryError = galleryErr.message;
-      if (galleryErr.code === '42P01' || (galleryErr.message || '').toLowerCase().includes('does not exist')) {
-        report.galleryError = `Table "${GALLERY_TABLE}" optional table in Supabase.`;
-      }
     } else {
       report.galleryTableOk = true;
       report.galleryImagesCount = galleryCount ?? 0;
     }
 
-    // Check flight_consignments table
+    // 7. Check flight_consignments table
     const { count: flightsCount, error: flightsErr } = await supabase
       .from(FLIGHTS_TABLE)
       .select('id', { count: 'exact', head: true });
 
     if (flightsErr) {
       report.flightsError = flightsErr.message;
-      if (flightsErr.code === '42P01' || (flightsErr.message || '').toLowerCase().includes('does not exist')) {
-        report.flightsError = `Table "${FLIGHTS_TABLE}" optional table in Supabase.`;
-      }
     } else {
       report.flightsTableOk = true;
       report.flightsCount = flightsCount ?? 0;
     }
 
-    report.isConnected = report.usersTableOk || report.calculationsTableOk || report.galleryTableOk || report.flightsTableOk || !report.usersError?.includes('FetchError');
+    report.isConnected =
+      report.usersTableOk ||
+      report.workoutSheetsTableOk ||
+      report.calculationsTableOk ||
+      !report.usersError?.includes('FetchError');
   } catch (err: any) {
     report.generalError = err?.message || 'Failed to connect to Supabase backend';
   }

@@ -26,18 +26,32 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
       });
     });
 
-    // Obtain tokens in root before hook for all sections
-    const adminRes = await apiRequest("/api/auth/login", {
+    // Dynamically register test accounts for testing suite
+    const adminRes = await apiRequest("/api/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username: "admin", password: "admin123" }),
+      body: JSON.stringify({
+        username: "admin",
+        password: "adminPassword123!",
+        role: "admin",
+        name: "Test Administrator",
+        email: "admin@globaltrade.com",
+        phone: "+201001234567",
+      }),
     });
     if (adminRes.body?.token) {
       adminToken = adminRes.body.token;
     }
 
-    const traderRes = await apiRequest("/api/auth/login", {
+    const traderRes = await apiRequest("/api/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username: "trader", password: "user123" }),
+      body: JSON.stringify({
+        username: "trader",
+        password: "traderPassword123!",
+        role: "user",
+        name: "Test Trader",
+        email: "trader@globaltrade.com",
+        phone: "+201112345678",
+      }),
     });
     if (traderRes.body?.token) {
       traderToken = traderRes.body.token;
@@ -177,7 +191,7 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
     test("POST /api/auth/login succeeds for Administrator", async () => {
       const res = await apiRequest("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ username: "admin", password: "admin123" }),
+        body: JSON.stringify({ username: "admin", password: "adminPassword123!" }),
       });
 
       assert.equal(res.status, 200);
@@ -190,7 +204,7 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
     test("POST /api/auth/login succeeds for Standard Trader User", async () => {
       const res = await apiRequest("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ username: "trader", password: "user123" }),
+        body: JSON.stringify({ username: "trader", password: "traderPassword123!" }),
       });
 
       assert.equal(res.status, 200);
@@ -337,7 +351,7 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
             method: "POST",
             body: JSON.stringify({
               username: "trader",
-              newPassword: "user123",
+              newPassword: "traderPassword123!",
               resetMethod: "phone_otp",
               resetCode: r.body.devOtp,
             }),
@@ -350,7 +364,7 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
         method: "POST",
         body: JSON.stringify({
           username: "trader",
-          password: "user123",
+          password: "traderPassword123!",
         }),
       });
       traderToken = reloginRes.body.token;
@@ -370,7 +384,7 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
         method: "POST",
         body: JSON.stringify({
           username: "trader",
-          newPassword: "user123",
+          newPassword: "traderPassword123!",
           resetMethod: "email_otp",
           resetCode: emailOtpRes.body.devOtp,
         }),
@@ -383,7 +397,7 @@ describe("Cargo Profit Automated System & Logic Test Suite", () => {
         method: "POST",
         body: JSON.stringify({
           username: "trader",
-          password: "user123",
+          password: "traderPassword123!",
         }),
       });
       traderToken = reloginRes2.body.token;

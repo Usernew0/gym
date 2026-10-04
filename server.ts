@@ -509,60 +509,8 @@ interface ForgotPasswordOtpRecord {
 const forgotPasswordOtpStore = new Map<string, ForgotPasswordOtpRecord>();
 
 function seedInMemoryUsers() {
-  if (!serverUsersStore["admin"]) {
-    serverUsersStore["admin"] = {
-      userId: "USR-ADMIN-001",
-      username: "admin",
-      name: "System Administrator",
-      email: "admin@globaltrade.com",
-      phone: "+201001234567",
-      company: "Global Trade & Logistics Solutions",
-      role: "admin",
-      status: "active",
-      password: hashPassword("admin123"),
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      twoFactorEnabled: false,
-    };
-  } else if (!serverUsersStore["admin"].phone) {
-    serverUsersStore["admin"].phone = "+201001234567";
-  }
-
-  if (!serverUsersStore["trader"]) {
-    serverUsersStore["trader"] = {
-      userId: "USR-TRADER-001",
-      username: "trader",
-      name: "Senior Import & Freight Specialist",
-      email: "trader@globaltrade.com",
-      phone: "+201112345678",
-      company: "Trans-Global Freight Operations",
-      role: "user",
-      status: "active",
-      password: hashPassword("user123"),
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      twoFactorEnabled: false,
-    };
-  } else if (!serverUsersStore["trader"].phone) {
-    serverUsersStore["trader"].phone = "+201112345678";
-  }
-
-  if (!serverUsersStore["educationsessions@gmail.com"]) {
-    serverUsersStore["educationsessions@gmail.com"] = {
-      userId: "USR-ADMIN-002",
-      username: "educationsessions@gmail.com",
-      name: "Education Admin",
-      email: "educationsessions@gmail.com",
-      phone: "+201001234567",
-      company: "Gym Workout Operations",
-      role: "admin",
-      status: "active",
-      password: hashPassword("admin123"),
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      twoFactorEnabled: false,
-    };
-  }
+  // Pre-configured default credentials removed for security.
+  // Accounts are created dynamically through user registration or admin roster.
 }
 seedInMemoryUsers();
 
@@ -571,6 +519,7 @@ let serverGalleryStore: Record<string, any> = {};
 let serverFlightsStore: Record<string, any> = {};
 let serverSiteFavicon: string | null = null;
 let serverInactivityTimeoutMinutes: number = 15;
+let serverAllowCreateAccount: boolean = true;
 let serverGeminiApiKey: string = "";
 
 function getEffectiveGeminiKey(): string {
@@ -774,6 +723,93 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: "Login failed: " + (error?.message || "") });
+  }
+});
+
+// POST /api/auth/register (Create new user or setup initial administrator account)
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { username, password, email, name, phone, company, role } = req.body || {};
+    const cleanUsername = String(username || "").trim().toLowerCase();
+    const cleanPassword = String(password || "").trim();
+
+    if (!cleanUsername || !cleanPassword) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    // Check if user already exists
+    if (serverUsersStore[cleanUsername]) {
+      return res.status(409).json({ error: "Username already exists" });
+    }
+
+    // Check if registration is allowed by policy (always allow initial admin account creation if 0 users)
+    const existingCount = Object.keys(serverUsersStore).length;
+    if (!serverAllowCreateAccount && existingCount > 0) {
+      return res.status(403).json({
+        error: "Account registration is currently disabled by the system administrator.",
+      });
+    }
+
+    // Determine role: if no users in store or email is educationsessions@gmail.com or cleanUsername is admin, grant admin; otherwise requested role or user
+    const assignedRole = (existingCount === 0 || cleanUsername === "admin" || String(email || "").toLowerCase() === "educationsessions@gmail.com" || role === "admin")
+      ? "admin"
+      : "user";
+
+    const newUser: any = {
+      userId: `USR-${Date.now().toString(36).toUpperCase()}`,
+      username: cleanUsername,
+      name: String(name || cleanUsername).trim(),
+      email: String(email || "").trim(),
+      phone: String(phone || "").trim(),
+      company: String(company || "Gym Workout Operations").trim(),
+      role: assignedRole,
+      status: "active",
+      password: hashPassword(cleanPassword),
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+      twoFactorEnabled: false,
+    };
+
+    serverUsersStore[cleanUsername] = newUser;
+
+    // Synchronize to Supabase if configured
+    try {
+      await supabase.from("users").upsert({
+        id: cleanUsername,
+        user_id: newUser.userId,
+        username: cleanUsername,
+        full_name: newUser.name,
+        email: newUser.email,
+        phone: newUser.phone,
+        company_name: newUser.company,
+        role: newUser.role,
+        status: "active",
+        password: newUser.password,
+        profile_data: newUser,
+        created_at: newUser.createdAt,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn("[Register Supabase Sync Notice]:", e);
+    }
+
+    const token = generateToken({
+      userId: newUser.userId,
+      username: cleanUsername,
+      role: newUser.role,
+      password: newUser.password,
+    });
+
+    res.status(201).json({
+      success: true,
+      token,
+      user: sanitizeUser(newUser),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Registration failed: " + (error?.message || "") });
   }
 });
 
@@ -2948,6 +2984,50 @@ app.post("/api/settings/session-timeout", requireAdmin, async (req, res) => {
     res.json({ success: true, timeoutMinutes: cleanMinutes });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to save session timeout setting" });
+  }
+});
+
+// GET /api/settings/auth-policy (Publicly accessible for LoginScreen check)
+app.get("/api/settings/auth-policy", async (_req, res) => {
+  try {
+    try {
+      const { data } = await supabase
+        .from("site_settings")
+        .select("*")
+        .eq("id", "auth_policy")
+        .maybeSingle();
+      if (data && data.settings_data && typeof data.settings_data.allowCreateAccount === "boolean") {
+        serverAllowCreateAccount = data.settings_data.allowCreateAccount;
+      }
+    } catch {}
+
+    res.json({ allowCreateAccount: serverAllowCreateAccount });
+  } catch {
+    res.json({ allowCreateAccount: true });
+  }
+});
+
+// POST /api/settings/auth-policy (Admin Only: toggle create account visibility)
+app.post("/api/settings/auth-policy", requireAdmin, async (req, res) => {
+  try {
+    const { allowCreateAccount } = req.body || {};
+    const enabled = Boolean(allowCreateAccount);
+    serverAllowCreateAccount = enabled;
+
+    try {
+      await supabase.from("site_settings").upsert({
+        id: "auth_policy",
+        settings_data: {
+          allowCreateAccount: enabled,
+          updatedAt: new Date().toISOString(),
+        },
+        updated_at: new Date().toISOString(),
+      });
+    } catch {}
+
+    res.json({ success: true, allowCreateAccount: enabled });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to save auth policy setting" });
   }
 });
 

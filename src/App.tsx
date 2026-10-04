@@ -225,7 +225,7 @@ export default function App() {
               if (!map.has(l.id)) map.set(l.id, l);
             });
             const merged = Array.from(map.values()).sort(
-              (a, b) => new Date(b.createdAt || b.date || 0).getTime() - new Date(a.createdAt || a.date || 0).getTime()
+              (a, b) => new Date(b.loggedAt || b.createdAt || b.date || 0).getTime() - new Date(a.loggedAt || a.createdAt || a.date || 0).getTime()
             );
             try {
               localStorage.setItem(logsStorageKey, JSON.stringify(merged));

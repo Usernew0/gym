@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, TwoFactorChallengeData } from '../types';
-import { loginUserApi } from '../lib/api';
-import { getUserProfileFromFirestore } from '../lib/firebase';
+import { loginUserApi, registerUserApi, getAuthPolicyApi } from '../lib/api';
+import {
+  getUserProfileFromFirestore,
+  getCreateAccountEnabledFromFirestore,
+  subscribeToCreateAccountEnabled,
+} from '../lib/firebase';
 import {
   saveFullSession,
   STORAGE_KEYS,
@@ -59,6 +63,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   });
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
   const [rememberMe, setRememberMe] = useState<boolean>(() => {
     return localStorage.getItem('cargo_remember_me') !== 'false';
   });
@@ -107,6 +114,45 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setErrorMsg(null);
     clearSessionInvalidationNotice();
     setInvalidationNotice(null);
+
+    // If User is in Registration / Create Account mode
+    if (isRegisterMode) {
+      if (cleanPassword.length < 6) {
+        setErrorMsg(
+          lang === 'ar'
+            ? 'يجب أن تتكون كلمة المرور من 6 أحرف على الأقل'
+            : 'Password must be at least 6 characters long'
+        );
+        setIsSubmitting(false);
+        return;
+      }
+      try {
+        const regRes = await registerUserApi({
+          username: cleanUsername,
+          password: cleanPassword,
+          name: fullName.trim() || cleanUsername,
+          email: email.trim(),
+        });
+        saveFullSession(regRes.token, regRes.user, rememberMe);
+        setSuccessMsg(
+          lang === 'ar'
+            ? 'تم إنشاء الحساب بنجاح! جاري تسجيل الدخول...'
+            : 'Account created successfully! Logging you in...'
+        );
+        setTimeout(() => {
+          onLoginSuccess(regRes.user);
+          setIsSubmitting(false);
+        }, 800);
+        return;
+      } catch (regErr: any) {
+        setErrorMsg(
+          regErr?.message ||
+          (lang === 'ar' ? 'فشل إنشاء الحساب، يرجى المحاولة مرة أخرى' : 'Failed to create account. Please try again.')
+        );
+        setIsSubmitting(false);
+        return;
+      }
+    }
 
     try {
       let activeUser: UserProfile | null = null;
@@ -399,28 +445,80 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   />
                 ) : (
                   <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* Demo / Admin Credentials Quick-Fill Banner */}
-                    <div className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/30 flex items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2 text-slate-300">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
-                        <span>
-                          <strong className="text-emerald-400">{lang === 'ar' ? 'حساب المدير:' : 'Admin Account:'}</strong>{' '}
-                          <code className="bg-slate-800 text-emerald-300 px-1.5 py-0.5 rounded text-[11px] font-mono">admin</code> /{' '}
-                          <code className="bg-slate-800 text-emerald-300 px-1.5 py-0.5 rounded text-[11px] font-mono">admin123</code>
-                        </span>
-                      </div>
+                    {/* Authentication Mode Switcher: Sign In vs Create Account */}
+                    <div className="flex rounded-xl bg-slate-950/70 p-1 border border-slate-800 gap-1 text-xs">
                       <button
                         type="button"
                         onClick={() => {
-                          setUsername('admin');
-                          setPassword('admin123');
+                          setIsRegisterMode(false);
                           setErrorMsg(null);
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-all cursor-pointer shrink-0"
+                        className={`flex-1 py-2 px-3 rounded-lg font-bold transition-all text-center cursor-pointer ${
+                          !isRegisterMode
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
                       >
-                        {lang === 'ar' ? 'تعبئة تلقائية' : 'Auto Fill'}
+                        {lang === 'ar' ? 'تسجيل الدخول' : 'Sign In'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsRegisterMode(true);
+                          setErrorMsg(null);
+                        }}
+                        className={`flex-1 py-2 px-3 rounded-lg font-bold transition-all text-center cursor-pointer ${
+                          isRegisterMode
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        {lang === 'ar' ? 'إنشاء حساب جديد' : 'Create Account'}
                       </button>
                     </div>
+
+                    {/* Registration Only Fields */}
+                    {isRegisterMode && (
+                      <>
+                        {/* Full Name */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                            {lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}
+                          </label>
+                          <div className="relative">
+                            <div className="absolute inset-y-0 ltr:left-0 rtl:right-0 ltr:pl-3.5 rtl:pr-3.5 flex items-center pointer-events-none text-slate-400">
+                              <User className="w-4 h-4 text-emerald-400" />
+                            </div>
+                            <input
+                              type="text"
+                              value={fullName}
+                              onChange={(e) => setFullName(e.target.value)}
+                              placeholder={lang === 'ar' ? 'مثال: محمد أحمد' : 'e.g. Alex Morgan'}
+                              className="w-full ltr:pl-10 rtl:pr-10 ltr:pr-3.5 rtl:pl-3.5 py-2.5 text-sm rounded-xl border border-slate-600 bg-slate-900/80 text-white font-semibold placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/50"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Email */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                            {lang === 'ar' ? 'البريد الإلكتروني' : 'Email Address'}
+                          </label>
+                          <div className="relative">
+                            <div className="absolute inset-y-0 ltr:left-0 rtl:right-0 ltr:pl-3.5 rtl:pr-3.5 flex items-center pointer-events-none text-slate-400">
+                              <Globe className="w-4 h-4 text-emerald-400" />
+                            </div>
+                            <input
+                              type="email"
+                              value={email}
+                              onChange={(e) => setEmail(e.target.value)}
+                              placeholder="athlete@example.com"
+                              className="w-full ltr:pl-10 rtl:pr-10 ltr:pr-3.5 rtl:pl-3.5 py-2.5 text-sm rounded-xl border border-slate-600 bg-slate-900/80 text-white font-semibold placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/50"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
 
                     {/* Username Input */}
                     <div>
@@ -472,33 +570,35 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       </div>
                     </div>
 
-                    {/* Remember Me Option & Forgot Password Link */}
-                    <div className="flex items-center justify-between pt-1 gap-2">
-                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer select-none group">
-                        <input
-                          type="checkbox"
-                          checked={rememberMe}
-                          onChange={(e) => setRememberMe(e.target.checked)}
-                          className="w-4 h-4 rounded-md bg-slate-900 border-slate-600 text-emerald-500 focus:ring-emerald-500/50 focus:ring-offset-slate-800 cursor-pointer accent-emerald-500"
-                        />
-                        <span className="group-hover:text-white transition-colors">
-                          {t.rememberMeLabel || (lang === 'ar' ? 'تذكر بيانات الدخول' : 'Remember me on this device')}
-                        </span>
-                      </label>
+                    {/* Remember Me Option & Forgot Password Link (Only in Sign In Mode) */}
+                    {!isRegisterMode && (
+                      <div className="flex items-center justify-between pt-1 gap-2">
+                        <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer select-none group">
+                          <input
+                            type="checkbox"
+                            checked={rememberMe}
+                            onChange={(e) => setRememberMe(e.target.checked)}
+                            className="w-4 h-4 rounded-md bg-slate-900 border-slate-600 text-emerald-500 focus:ring-emerald-500/50 focus:ring-offset-slate-800 cursor-pointer accent-emerald-500"
+                          />
+                          <span className="group-hover:text-white transition-colors">
+                            {t.rememberMeLabel || (lang === 'ar' ? 'تذكر بيانات الدخول' : 'Remember me on this device')}
+                          </span>
+                        </label>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsForgotPasswordMode(true);
-                          setErrorMsg(null);
-                          setSuccessMsg(null);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-950/70 border border-emerald-500/30 cursor-pointer transition-all shrink-0"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>{t.forgotPasswordLink || (lang === 'ar' ? 'هل نسيت كلمة المرور؟' : 'Forgot Password?')}</span>
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsForgotPasswordMode(true);
+                            setErrorMsg(null);
+                            setSuccessMsg(null);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-950/70 border border-emerald-500/30 cursor-pointer transition-all shrink-0"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                          <span>{t.forgotPasswordLink || (lang === 'ar' ? 'هل نسيت كلمة المرور؟' : 'Forgot Password?')}</span>
+                        </button>
+                      </div>
+                    )}
 
                     {/* Invalidation & Security Notice */}
                     {invalidationNotice && (
@@ -529,7 +629,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       </div>
                     )}
 
-                    {/* Login Submit Button */}
+                    {/* Login / Register Submit Button */}
                     <button
                       type="submit"
                       disabled={isSubmitting}
@@ -539,7 +639,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                         <Loader2 className="w-5 h-5 animate-spin" />
                       ) : (
                         <>
-                          <span>{t.loginSubmitBtn}</span>
+                          <span>
+                            {isRegisterMode
+                              ? (lang === 'ar' ? 'إنشاء الحساب والمتابعة' : 'Create Account & Continue')
+                              : t.loginSubmitBtn}
+                          </span>
                           {lang === 'ar' ? <ArrowLeft className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
                         </>
                       )}

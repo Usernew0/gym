@@ -18,6 +18,8 @@ import {
   getCalculationsFromFirestore,
   saveSessionTimeoutToFirestore,
   getSessionTimeoutFromFirestore,
+  saveCreateAccountEnabledToFirestore,
+  getCreateAccountEnabledFromFirestore,
   saveSiteFaviconToFirestore,
   getSiteFaviconFromFirestore,
   sendPasswordResetEmailViaFirebase,
@@ -195,6 +197,56 @@ export async function loginUserApi(username: string, password: string): Promise<
       throw new Error('Invalid username or password');
     }
     throw new Error(err?.message || 'Invalid username or password');
+  }
+}
+
+// User Registration API (Create new account or setup administrator)
+export async function registerUserApi(params: {
+  username: string;
+  password: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  role?: 'admin' | 'user';
+}): Promise<{ token: string; user: UserProfile }> {
+  const cleanUsername = String(params.username || '').trim().toLowerCase();
+  const cleanPassword = String(params.password || '').trim();
+
+  try {
+    const data = await apiFetch('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    if (data.token) {
+      setSessionToken(data.token);
+    }
+    if (data.user) {
+      // Background sync to Firestore
+      saveUserProfileToFirestore(data.user).catch(() => {});
+    }
+    return data;
+  } catch (err: any) {
+    console.info('Backend registration notice, saving directly to Firestore database:', err?.message || err);
+    // Direct Firestore creation fallback
+    const newUser: UserProfile = {
+      userId: `USR-${Date.now().toString(36).toUpperCase()}`,
+      username: cleanUsername,
+      name: String(params.name || cleanUsername).trim(),
+      email: String(params.email || '').trim(),
+      phone: String(params.phone || '').trim(),
+      company: String(params.company || 'Gym Workout Operations').trim(),
+      role: params.role || (cleanUsername === 'admin' || String(params.email || '').toLowerCase() === 'educationsessions@gmail.com' ? 'admin' : 'user'),
+      status: 'active',
+      password: cleanPassword,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+      twoFactorEnabled: false,
+    };
+    await saveUserProfileToFirestore(newUser);
+    const clientToken = `client_${newUser.userId}_${Date.now()}`;
+    setSessionToken(clientToken);
+    return { token: clientToken, user: newUser };
   }
 }
 
@@ -781,6 +833,36 @@ export async function saveSessionTimeoutApi(timeoutMinutes: number): Promise<boo
   } catch (err) {
     console.info('Backend save session timeout notice, writing to Firestore:', err);
     await saveSessionTimeoutToFirestore(timeoutMinutes);
+    return true;
+  }
+}
+
+export async function getAuthPolicyApi(): Promise<{ allowCreateAccount: boolean }> {
+  try {
+    const data = await apiFetch('/api/settings/auth-policy');
+    if (typeof data.allowCreateAccount === 'boolean') {
+      try {
+        localStorage.setItem('cargo_allow_create_account', String(data.allowCreateAccount));
+      } catch {}
+      return { allowCreateAccount: data.allowCreateAccount };
+    }
+  } catch {}
+  const fallback = await getCreateAccountEnabledFromFirestore();
+  return { allowCreateAccount: fallback };
+}
+
+export async function saveAuthPolicyApi(allowCreateAccount: boolean): Promise<boolean> {
+  const isEnabled = Boolean(allowCreateAccount);
+  try {
+    await apiFetch('/api/settings/auth-policy', {
+      method: 'POST',
+      body: JSON.stringify({ allowCreateAccount: isEnabled }),
+    });
+    saveCreateAccountEnabledToFirestore(isEnabled).catch(() => {});
+    return true;
+  } catch (err) {
+    console.info('Backend save auth policy notice, writing to Firestore:', err);
+    await saveCreateAccountEnabledToFirestore(isEnabled);
     return true;
   }
 }

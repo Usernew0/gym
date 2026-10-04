@@ -194,52 +194,13 @@ export const WORKOUT_LOGS_COLLECTION = "workout_logs";
 export const NUTRITION_LOGS_COLLECTION = "nutrition_logs";
 
 /**
- * Initializes Firestore connection and ensures default admin accounts exist.
+ * Initializes Firestore connection and verifies connectivity without default dummy credentials.
  */
 export async function seedDefaultDataToFirestore(): Promise<void> {
   try {
     await ensureAuth();
-    // Seed default admin user into Firestore if not present
-    const adminDocRef = doc(db, USERS_COLLECTION, 'admin');
-    const adminSnap = await getDoc(adminDocRef);
-    if (!adminSnap.exists()) {
-      const defaultAdmin: UserProfile = {
-        userId: 'USR-ADMIN-001',
-        username: 'admin',
-        name: 'System Administrator',
-        email: 'admin@globaltrade.com',
-        phone: '+201001234567',
-        company: 'Gym Workout Operations',
-        role: 'admin',
-        status: 'active',
-        password: 'admin123',
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-        twoFactorEnabled: false,
-      };
-      await setDoc(adminDocRef, defaultAdmin);
-    }
-
-    // Also seed user email as admin alias if not present
-    const educationAdminRef = doc(db, USERS_COLLECTION, 'educationsessions@gmail.com');
-    const eduSnap = await getDoc(educationAdminRef);
-    if (!eduSnap.exists()) {
-      const defaultEduAdmin: UserProfile = {
-        userId: 'USR-ADMIN-002',
-        username: 'educationsessions@gmail.com',
-        name: 'Education Admin',
-        email: 'educationsessions@gmail.com',
-        phone: '+201001234567',
-        company: 'Gym Workout Operations',
-        role: 'admin',
-        status: 'active',
-        password: 'admin123',
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-        twoFactorEnabled: false,
-      };
-      await setDoc(educationAdminRef, defaultEduAdmin);
-    }
+    // No hardcoded default credentials are seeded.
+    // Accounts are created explicitly via Registration or Admin roster.
   } catch (error: any) {
     handleFirestoreError(error, OperationType.WRITE, "auto-seed");
   }
@@ -1124,6 +1085,128 @@ export function subscribeToSessionTimeout(callback: (timeoutMinutes: number) => 
 }
 
 /**
+ * Save Create Account / User Registration visibility toggle to Firestore site_settings
+ */
+export async function saveCreateAccountEnabledToFirestore(
+  enabled: boolean,
+  updatedBy?: string
+): Promise<void> {
+  const isEnabled = Boolean(enabled);
+  try {
+    await ensureAuth();
+    const policyDocRef = doc(db, SETTINGS_COLLECTION, "auth_policy");
+    await setDoc(
+      policyDocRef,
+      {
+        allowCreateAccount: isEnabled,
+        updatedAt: new Date().toISOString(),
+        updatedBy: updatedBy || "admin",
+      },
+      { merge: true }
+    );
+
+    // Also mirror to security document for compatibility
+    const securityDocRef = doc(db, SETTINGS_COLLECTION, "security");
+    await setDoc(
+      securityDocRef,
+      {
+        allowCreateAccount: isEnabled,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    // Update local cache and dispatch window event for instant multi-tab reactivity
+    try {
+      localStorage.setItem("cargo_allow_create_account", String(isEnabled));
+      window.dispatchEvent(
+        new CustomEvent("cargo_allow_create_account_updated", { detail: isEnabled })
+      );
+    } catch {}
+
+    console.info(`Create Account toggle (${isEnabled ? "VISIBLE" : "HIDDEN"}) saved to Firestore site_settings.`);
+  } catch (error: any) {
+    handleFirestoreError(error, OperationType.WRITE, `${SETTINGS_COLLECTION}/auth_policy`);
+  }
+}
+
+/**
+ * Fetch Create Account / Registration visibility policy from Firestore site_settings
+ */
+export async function getCreateAccountEnabledFromFirestore(): Promise<boolean> {
+  try {
+    await ensureAuth();
+    // 1. Check site_settings/auth_policy
+    const docRef = doc(db, SETTINGS_COLLECTION, "auth_policy");
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (typeof data?.allowCreateAccount === "boolean") {
+        try {
+          localStorage.setItem("cargo_allow_create_account", String(data.allowCreateAccount));
+        } catch {}
+        return data.allowCreateAccount;
+      }
+    }
+
+    // 2. Fallback to site_settings/security
+    const secRef = doc(db, SETTINGS_COLLECTION, "security");
+    const secSnap = await getDoc(secRef);
+    if (secSnap.exists()) {
+      const data = secSnap.data();
+      if (typeof data?.allowCreateAccount === "boolean") {
+        try {
+          localStorage.setItem("cargo_allow_create_account", String(data.allowCreateAccount));
+        } catch {}
+        return data.allowCreateAccount;
+      }
+    }
+  } catch (error: any) {
+    console.info("Firestore auth policy fetch notice:", error?.message || error);
+  }
+
+  // 3. Fallback to local storage or default true
+  try {
+    const cached = localStorage.getItem("cargo_allow_create_account");
+    if (cached !== null) {
+      return cached === "true";
+    }
+  } catch {}
+  return true;
+}
+
+/**
+ * Real-time subscription to Create Account toggle changes in Firestore site_settings
+ */
+export function subscribeToCreateAccountEnabled(
+  callback: (enabled: boolean) => void
+): () => void {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, "auth_policy");
+    return onSnapshot(
+      docRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (typeof data?.allowCreateAccount === "boolean") {
+            try {
+              localStorage.setItem("cargo_allow_create_account", String(data.allowCreateAccount));
+            } catch {}
+            callback(data.allowCreateAccount);
+          }
+        }
+      },
+      (error) => {
+        console.info("Notice: Create account subscription status:", error?.message || error);
+      }
+    );
+  } catch (err) {
+    console.info("Realtime create account subscription notice:", err);
+    return () => {};
+  }
+}
+
+/**
  * Save site favicon URL / Data-URI to Firestore and local cache
  */
 export async function saveSiteFaviconToFirestore(faviconUrl: string): Promise<void> {
@@ -1589,7 +1672,8 @@ export async function saveWorkoutLogToFirestore(log: WorkoutLog): Promise<void> 
     const docRef = doc(db, WORKOUT_LOGS_COLLECTION, log.id);
     await setDoc(docRef, {
       ...log,
-      createdAt: log.createdAt || new Date().toISOString(),
+      loggedAt: log.loggedAt || log.createdAt || new Date().toISOString(),
+      createdAt: log.loggedAt || log.createdAt || new Date().toISOString(),
     }, { merge: true });
   } catch (fsErr) {
     handleFirestoreError(fsErr, OperationType.WRITE, `${WORKOUT_LOGS_COLLECTION}/${log.id}`);
@@ -1627,7 +1711,7 @@ export async function getWorkoutLogsFromFirestore(userId?: string): Promise<Work
   }
 
   return Array.from(logsMap.values()).sort(
-    (a, b) => new Date(b.createdAt || b.date || 0).getTime() - new Date(a.createdAt || a.date || 0).getTime()
+    (a, b) => new Date(b.loggedAt || b.createdAt || b.date || 0).getTime() - new Date(a.loggedAt || a.createdAt || a.date || 0).getTime()
   );
 }
 
