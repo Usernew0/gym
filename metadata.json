@@ -1,0 +1,6 @@
+{
+  "name": "Gym workout",
+  "description": "Smart gym workout tracker with automated workout sheet extraction for exercises, sets and reps, multi-week progressive overload logging, history of sheets, and nutrition tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

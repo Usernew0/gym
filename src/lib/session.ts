@@ -1,0 +1,340 @@
+import { UserProfile } from '../types';
+
+/**
+ * Enhanced Session & User Profile Persistence Manager
+ *
+ * Implements clean architectural separation between:
+ * 1. 'Session Token' storage (cargo_session_token / cargo_auth_token)
+ * 2. 'User Profile' metadata storage (cargo_user_profile)
+ *
+ * Provides safety guards to prevent admin session credentials from being
+ * overwritten when modifying user records.
+ */
+
+export const STORAGE_KEYS = {
+  SESSION_TOKEN: 'cargo_session_token',
+  AUTH_TOKEN_LEGACY: 'cargo_auth_token',
+  USER_PROFILE: 'cargo_user_profile',
+  REMEMBER_ME: 'cargo_remember_me',
+  REMEMBER_USERNAME: 'cargo_remember_username',
+  SESSION_ACTIVE: 'cargo_session_active',
+  INACTIVITY_TIMEOUT: 'cargo_inactivity_timeout_minutes',
+  SESSION_INVALIDATION_NOTICE: 'cargo_session_invalidation_notice',
+} as const;
+
+export interface SessionInvalidationNotice {
+  code: 'CREDENTIALS_CHANGED' | 'ACCOUNT_SUSPENDED' | 'ACCOUNT_DELETED' | 'SESSION_EXPIRED' | 'UNAUTHORIZED';
+  messageEn: string;
+  messageAr: string;
+  timestamp: string;
+}
+
+/**
+ * Set Session Invalidation Notice
+ */
+export function setSessionInvalidationNotice(notice: SessionInvalidationNotice | null): void {
+  try {
+    if (!notice) {
+      sessionStorage.removeItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE);
+      localStorage.removeItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE);
+      return;
+    }
+    const data = JSON.stringify(notice);
+    sessionStorage.setItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE, data);
+    localStorage.setItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE, data);
+  } catch {}
+}
+
+/**
+ * Get Session Invalidation Notice
+ */
+export function getSessionInvalidationNotice(): SessionInvalidationNotice | null {
+  try {
+    const raw =
+      sessionStorage.getItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE) ||
+      localStorage.getItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clear Session Invalidation Notice
+ */
+export function clearSessionInvalidationNotice(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE);
+    localStorage.removeItem(STORAGE_KEYS.SESSION_INVALIDATION_NOTICE);
+  } catch {}
+}
+
+/**
+ * Trigger immediate session invalidation event across the application
+ */
+export function triggerSessionInvalidation(notice: SessionInvalidationNotice): void {
+  setSessionInvalidationNotice(notice);
+  clearFullSession();
+  try {
+    const event = new CustomEvent('cargo_session_invalidated', { detail: notice });
+    window.dispatchEvent(event);
+  } catch {}
+}
+
+/**
+ * Subscribe to session invalidation events
+ */
+export function onSessionInvalidated(callback: (notice: SessionInvalidationNotice) => void): () => void {
+  const handler = (e: Event) => {
+    const customEvent = e as CustomEvent<SessionInvalidationNotice>;
+    if (customEvent.detail) {
+      callback(customEvent.detail);
+    }
+  };
+  window.addEventListener('cargo_session_invalidated', handler);
+  return () => {
+    window.removeEventListener('cargo_session_invalidated', handler);
+  };
+}
+
+/**
+ * Retrieve Session Token from localStorage or sessionStorage
+ */
+export function getSessionToken(): string | null {
+  try {
+    const direct =
+      localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) ||
+      sessionStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) ||
+      localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY) ||
+      sessionStorage.getItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY) ||
+      null;
+
+    if (direct && direct.trim()) {
+      return direct.trim();
+    }
+
+    // If token is missing from storage but an active user profile exists, synthesize a fallback client token
+    const saved = localStorage.getItem(STORAGE_KEYS.USER_PROFILE) || sessionStorage.getItem(STORAGE_KEYS.USER_PROFILE);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        const canonicalId = parsed.userId || parsed.user_id || parsed.username;
+        if (canonicalId) {
+          const fallbackToken = `client_${canonicalId}_${Date.now()}`;
+          setSessionToken(fallbackToken, true);
+          return fallbackToken;
+        }
+      } catch {}
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save Session Token independently from User Profile
+ */
+export function setSessionToken(token: string | null, rememberMe = true): void {
+  try {
+    if (!token) {
+      localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+      sessionStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY);
+      sessionStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY);
+      return;
+    }
+
+    if (rememberMe) {
+      localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, token);
+      localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY, token);
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, token);
+      sessionStorage.setItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY, token);
+    } else {
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, token);
+      sessionStorage.setItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY, token);
+      localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN_LEGACY);
+    }
+  } catch (err) {
+    console.warn('Unable to persist session token:', err);
+  }
+}
+
+/**
+ * Retrieve User Profile data independently from Session Token
+ */
+export function getStoredUserProfile(): UserProfile | null {
+  try {
+    const isRemembered = localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) !== 'false';
+    const isSessionActive = sessionStorage.getItem(STORAGE_KEYS.SESSION_ACTIVE) === 'true';
+
+    // If neither remember-me is active nor current browser tab session is active, discard
+    if (!isRemembered && !isSessionActive) {
+      localStorage.removeItem(STORAGE_KEYS.USER_PROFILE);
+      return null;
+    }
+
+    const saved = localStorage.getItem(STORAGE_KEYS.USER_PROFILE) || sessionStorage.getItem(STORAGE_KEYS.USER_PROFILE);
+    if (!saved) return null;
+
+    const parsed = JSON.parse(saved);
+    if (parsed && typeof parsed === 'object') {
+      const canonicalId = parsed.userId || parsed.user_id || `USR-${(parsed.username || 'USER').toUpperCase()}`;
+      parsed.userId = canonicalId;
+      parsed.user_id = canonicalId;
+
+      // Ensure admin role integrity for built-in admin identifiers
+      if (
+        (parsed.username?.toLowerCase() === 'admin' || parsed.userId === 'USR-ADMIN-001') &&
+        parsed.role !== 'admin'
+      ) {
+        parsed.role = 'admin';
+        parsed.status = 'active';
+        setStoredUserProfile(parsed, isRemembered);
+      }
+      return parsed as UserProfile;
+    }
+  } catch (err) {
+    console.warn('Unable to read user profile from storage:', err);
+  }
+  return null;
+}
+
+/**
+ * Save User Profile metadata independently from Session Token
+ */
+export function setStoredUserProfile(profile: UserProfile | null, rememberMe = true): void {
+  try {
+    if (!profile) {
+      localStorage.removeItem(STORAGE_KEYS.USER_PROFILE);
+      sessionStorage.removeItem(STORAGE_KEYS.USER_PROFILE);
+      return;
+    }
+
+    const canonicalId = profile.userId || profile.user_id || `USR-${(profile.username || 'USER').toUpperCase()}`;
+    const normalizedProfile: UserProfile = {
+      ...profile,
+      userId: canonicalId,
+      user_id: canonicalId,
+    };
+
+    const serialized = JSON.stringify(normalizedProfile);
+    if (rememberMe) {
+      localStorage.setItem(STORAGE_KEYS.USER_PROFILE, serialized);
+      sessionStorage.setItem(STORAGE_KEYS.USER_PROFILE, serialized);
+    } else {
+      sessionStorage.setItem(STORAGE_KEYS.USER_PROFILE, serialized);
+      localStorage.setItem(STORAGE_KEYS.USER_PROFILE, serialized);
+    }
+  } catch (err) {
+    console.warn('Unable to persist user profile:', err);
+  }
+}
+
+/**
+ * Atomically initialize full user session on successful login
+ */
+export function saveFullSession(token: string | null, profile: UserProfile, rememberMe = true): void {
+  try {
+    const canonicalId = profile.userId || profile.user_id || `USR-${(profile.username || 'USER').toUpperCase()}`;
+    const normalizedProfile: UserProfile = {
+      ...profile,
+      userId: canonicalId,
+      user_id: canonicalId,
+    };
+
+    // 1. Persist Session Token in dedicated token slot
+    setSessionToken(token, rememberMe);
+
+    // 2. Persist User Profile in dedicated profile slot
+    setStoredUserProfile(normalizedProfile, rememberMe);
+
+    // 3. Persist Remember Me & Session Active flags
+    if (rememberMe) {
+      localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
+      const rememberKey = (profile.username || profile.userId || '').toLowerCase().trim();
+      if (rememberKey) {
+        localStorage.setItem(STORAGE_KEYS.REMEMBER_USERNAME, rememberKey);
+      }
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_ACTIVE, 'true');
+    } else {
+      localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'false');
+      localStorage.removeItem(STORAGE_KEYS.REMEMBER_USERNAME);
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_ACTIVE, 'true');
+    }
+  } catch (err) {
+    console.warn('Unable to save full session:', err);
+  }
+}
+
+/**
+ * Clears active session credentials and profile data on logout
+ */
+export function clearFullSession(): void {
+  try {
+    setSessionToken(null);
+    setStoredUserProfile(null);
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_ACTIVE);
+    localStorage.removeItem(STORAGE_KEYS.USER_PROFILE);
+    sessionStorage.removeItem(STORAGE_KEYS.USER_PROFILE);
+  } catch (err) {
+    console.warn('Unable to clear full session:', err);
+  }
+}
+
+/**
+ * Checks if a given profile or username matches the currently authenticated session user.
+ * Essential for admin guards so editing other users never alters the admin's active credentials.
+ */
+export function isCurrentActiveUser(
+  currentUser: UserProfile | null | undefined,
+  targetUserOrUsername: UserProfile | string | null | undefined
+): boolean {
+  if (!currentUser || !targetUserOrUsername) return false;
+
+  const currentUsername = (currentUser.username || '').toLowerCase().trim();
+  const currentUserId = (currentUser.userId || '').toLowerCase().trim();
+
+  if (typeof targetUserOrUsername === 'string') {
+    const target = targetUserOrUsername.toLowerCase().trim();
+    return target === currentUsername || target === currentUserId;
+  }
+
+  const targetUsername = (targetUserOrUsername.username || '').toLowerCase().trim();
+  const targetUserId = (targetUserOrUsername.userId || '').toLowerCase().trim();
+
+  return (
+    (currentUsername !== '' && currentUsername === targetUsername) ||
+    (currentUserId !== '' && currentUserId === targetUserId)
+  );
+}
+
+/**
+ * Safely updates active user profile if and only if the updated profile belongs to the current session user.
+ * Supports optional oldUsername to accommodate username changes.
+ * Preserves the active Session Token completely untouched.
+ */
+export function updateActiveUserProfileIfCurrent(
+  currentUser: UserProfile | null | undefined,
+  updatedProfile: UserProfile,
+  oldUsername?: string
+): boolean {
+  const isMatch =
+    (oldUsername && isCurrentActiveUser(currentUser, oldUsername)) ||
+    isCurrentActiveUser(currentUser, updatedProfile);
+
+  if (!isMatch) {
+    // Target is another user record (e.g. edited by admin) — DO NOT touch current admin session
+    return false;
+  }
+
+  // Target is the current active user — update profile data
+  const isRemembered = localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) !== 'false';
+  setStoredUserProfile(updatedProfile, isRemembered);
+  if (isRemembered && updatedProfile.username) {
+    localStorage.setItem(STORAGE_KEYS.REMEMBER_USERNAME, updatedProfile.username.toLowerCase().trim());
+  }
+  return true;
+}
